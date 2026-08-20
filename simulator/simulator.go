@@ -81,7 +81,7 @@ func startDevice(deviceID, name string) {
 	}
 }
 
-// connectAndRun handles the actual active connection. 
+// connectAndRun handles the actual active connection.
 // It returns an error if the connection drops, triggering the backoff loop.
 func connectAndRun(deviceID, token string) error {
 	u := url.URL{Scheme: "ws", Host: "localhost:8080", Path: "/ws", RawQuery: "token=" + token}
@@ -107,7 +107,7 @@ func connectAndRun(deviceID, token string) error {
 				done <- err // Signal that the connection broke
 				return
 			}
-			
+
 			if msg.Type == "command" {
 				cacheMutex.RLock()
 				alreadyProcessed := processedCmds[msg.CommandID]
@@ -126,9 +126,9 @@ func connectAndRun(deviceID, token string) error {
 				cacheMutex.Unlock()
 
 				log.Printf("📥 [%s] Received command [%s]", deviceID, msg.Action)
-				time.Sleep(2 * time.Second) 
+				time.Sleep(2 * time.Second)
 				log.Printf("✅ [%s] Executed [%s]. Sending ack...", deviceID, msg.Action)
-				
+
 				ackMsg := map[string]interface{}{"type": "ack", "command_id": msg.CommandID}
 				writeMutex.Lock()
 				c.WriteJSON(ackMsg)
@@ -159,7 +159,7 @@ func connectAndRun(deviceID, token string) error {
 
 func enrollDevice(id, name string) string {
 	reqBody, _ := json.Marshal(map[string]string{"id": id, "name": name})
-	resp, err := http.Post("http://localhost:8080/enroll", "application/json", bytes.NewBuffer(reqBody))
+	resp, err := http.Post("https://mdm-matrix-backend.onrender.com/enroll", "application/json", bytes.NewBuffer(reqBody))
 	if err != nil || resp.StatusCode != 200 {
 		return ""
 	}
