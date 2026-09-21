@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { loginAdmin, sendDeviceCommand } from './services/api';
-import { useFleetState } from './hooks/useFleetState.js';
+import { useFleetState } from './hooks/fleet.js';
 import LoginForm from './components/LoginForm';
 import DeviceTable from './components/DeviceTable';
 import './App.css';
