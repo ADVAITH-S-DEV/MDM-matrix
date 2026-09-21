@@ -12,8 +12,10 @@ export const useFleetState = (token, onLogout) => {
       .then(data => setDevices(data || []))
       .catch(() => onLogout());
 
-    // Establish WebSocket for O(1) server-side push updates
-    const ws = new WebSocket(`ws://localhost:8080/admin/ws?token=${token}`);
+    // Derive WebSocket URL from environment variable, fallback to localhost
+    const apiUrl = import.meta.env.VITE_API_URL || "http://localhost:8080";
+    const wsUrl = apiUrl.replace(/^http/, 'ws');
+    const ws = new WebSocket(`${wsUrl}/admin/ws?token=${token}`);
     
     ws.onopen = () => console.log("🟢 Connected to Live Admin Hub");
     
