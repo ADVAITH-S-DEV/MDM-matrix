@@ -52,16 +52,14 @@ The backend requires these environment variables:
 ```env
 DATABASE_URL=postgresql://...
 JWT_SECRET=generate-a-long-random-secret
-ADMIN_USERNAME=admin
-ADMIN_PASSWORD=choose-a-strong-password
 ```
 
-`ADMIN_USERNAME` and `ADMIN_PASSWORD` are used to create or update the production
-admin account at startup, so a new Render database does not depend on a manually
-seeded password hash. Keep the same `JWT_SECRET` across deploys so existing login
-tokens remain valid.
+Admin credentials are read from the Supabase `admin_user` table. Its
+`password_hash` value must be a bcrypt hash; plaintext passwords are never stored
+in Render or in the database. Keep the same `JWT_SECRET` across deploys so
+existing login tokens remain valid.
 
-For a Render deployment, set all four values in the service's Environment page.
+For a Render deployment, set both values in the service's Environment page.
 Render supplies `PORT` automatically. For Vercel, set `VITE_API_URL` to the full
 HTTPS Render service URL (with no `/login` suffix), then redeploy the frontend.
 

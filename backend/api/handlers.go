@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"strings"
@@ -14,6 +15,7 @@ import (
 	"MDM-matrix/types"
 
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -77,7 +79,18 @@ func HandleLogin(dbPool *pgxpool.Pool) http.HandlerFunc {
 
 		var hash string
 		err := dbPool.QueryRow(context.Background(), "SELECT password_hash FROM admin_user WHERE username = $1", req.Username).Scan(&hash)
-		if err != nil || bcrypt.CompareHashAndPassword([]byte(hash), []byte(req.Password)) != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			log.Printf("Login rejected: username %q was not found in Supabase admin_user", req.Username)
+			http.Error(w, "Invalid credentials", http.StatusUnauthorized)
+			return
+		}
+		if err != nil {
+			log.Printf("Supabase login query failed: %v", err)
+			http.Error(w, "Authentication database error", http.StatusInternalServerError)
+			return
+		}
+		if err := bcrypt.CompareHashAndPassword([]byte(hash), []byte(req.Password)); err != nil {
+			log.Printf("Login rejected: password did not match for username %q", req.Username)
 			http.Error(w, "Invalid credentials", http.StatusUnauthorized)
 			return
 		}
