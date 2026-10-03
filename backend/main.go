@@ -10,6 +10,7 @@ import (
 	"MDM-matrix/api"
 	"MDM-matrix/hub"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/joho/godotenv"
 )
@@ -24,7 +25,18 @@ func main() {
 		log.Fatal("DATABASE_URL is not set")
 	}
 
-	dbPool, err := pgxpool.New(context.Background(), dbURL)
+	dbConfig, err := pgxpool.ParseConfig(dbURL)
+	if err != nil {
+		log.Fatalf("Unable to parse DATABASE_URL: %v\n", err)
+	}
+
+	// Supabase's transaction pooler (port 6543) does not support persistent
+	// prepared statements. pgx prepares and caches statements by default, so
+	// use the unnamed extended-protocol execution mode, which remains compatible
+	// with both transaction pooling and ordinary PostgreSQL connections.
+	dbConfig.ConnConfig.DefaultQueryExecMode = pgx.QueryExecModeExec
+
+	dbPool, err := pgxpool.NewWithConfig(context.Background(), dbConfig)
 	if err != nil {
 		log.Fatalf("Unable to create connection pool: %v\n", err)
 	}

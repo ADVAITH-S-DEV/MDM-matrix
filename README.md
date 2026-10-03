@@ -54,6 +54,11 @@ DATABASE_URL=postgresql://...
 JWT_SECRET=generate-a-long-random-secret
 ```
 
+For Render, use the exact Supabase connection string shown under **Connect →
+Transaction pooler**. It uses port `6543`, an IPv4-compatible pooler hostname,
+and a username in the form `postgres.PROJECT_REF`. The backend disables pgx's
+prepared-statement cache because Supabase transaction mode does not support it.
+
 Admin credentials are read from the Supabase `admin_user` table. Its
 `password_hash` value must be a bcrypt hash; plaintext passwords are never stored
 in Render or in the database. Keep the same `JWT_SECRET` across deploys so
