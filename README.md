@@ -82,4 +82,11 @@ cd simulator
 go mod tidy
 go run simulator.go
 \`\`\`
-*(Spins up concurrent device goroutines that automatically enroll, connect via WebSockets, and report heartbeats)*
+Set `MDM_API_URL` only when targeting a different backend; it defaults to the
+hosted Render service. For local development, set it to `http://localhost:8080`.
+The simulator spins up concurrent device goroutines that enroll, connect through
+WebSockets, execute demo commands, and report heartbeats.
+
+To run one named device instead of the five-device fleet, set `DEVICE_ID` and
+`DEVICE_NAME` before starting it. The ID must match the device row shown in the
+dashboard.

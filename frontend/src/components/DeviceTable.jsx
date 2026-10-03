@@ -1,37 +1,3 @@
-export default function DeviceTable({ devices, onCommand }) {
-  return (
-    <div className="table-container">
-      <table>
-        <thead>
-          <tr>
-            <th>ID</th>
-            <th>Name</th>
-            <th>Status</th>
-            <th>Battery</th>
-            <th>Last Seen</th>
-            <th>Actions</th>
-          </tr>
-        </thead>
-        <tbody>
-          {devices.map(dev => (
-            <tr key={dev.id}>
-              <td>{dev.id}</td>
-              <td>{dev.name}</td>
-              <td><span className={`status-badge ${dev.status}`}>{dev.status}</span></td>
-              <td>{dev.battery}%</td>
-              <td>{new Date(dev.last_seen).toLocaleTimeString()}</td>
-              <td className="actions">
-                <button onClick={() => onCommand(dev.id, 'lock')}>Lock</button>
-                <button onClick={() => onCommand(dev.id, 'wipe')} className="danger">Wipe</button>
-                <button onClick={() => onCommand(dev.id, 'update_policy')}>Policy Update</button>
-              </td>
-            </tr>
-          ))}
-          {devices.length === 0 && (
-            <tr><td colSpan="6" style={{ textAlign: 'center' }}>No devices enrolled.</td></tr>
-          )}
-        </tbody>
-      </table>
-    </div>
-  );
+export default function DeviceTable({ devices, onCommand, commandStates }) {
+  return <div className="table-wrap"><table><thead><tr><th>ID</th><th>Device</th><th>Status</th><th>Battery</th><th>Last seen</th><th>Actions</th></tr></thead><tbody>{devices.map(device => { const command = commandStates[device.id]; const busy = ['dispatching', 'pending', 'queued'].includes(command?.status); return <tr key={device.id}><td><code>{device.id}</code></td><td><div className="device"><b>{device.name?.[0] || 'D'}</b><strong>{device.name}</strong></div></td><td><span className={`status ${device.status}`}><i />{device.status}</span></td><td><div className="battery"><i><b style={{ width: `${device.battery}%` }} /></i>{device.battery}%</div></td><td>{new Date(device.last_seen).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</td><td><div className="actions"><button disabled={busy} onClick={() => onCommand(device.id, 'lock')}>Lock</button><button className="danger" disabled={busy} onClick={() => onCommand(device.id, 'wipe')}>Wipe</button><button disabled={busy} onClick={() => onCommand(device.id, 'update_policy')}>Update policy</button></div>{command && <div className={`feedback ${command.status}`}><b>{command.status}</b>{command.message}</div>}</td></tr>; })}{!devices.length && <tr><td colSpan="6" className="empty">No devices enrolled.</td></tr>}</tbody></table></div>;
 }

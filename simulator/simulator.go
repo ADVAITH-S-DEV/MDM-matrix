@@ -8,6 +8,8 @@ import (
 	"math/rand"
 	"net/http"
 	"net/url"
+	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -24,7 +26,45 @@ type EnrollResponse struct {
 	Token string `json:"token"`
 }
 
+func backendBaseURL() string {
+	baseURL := os.Getenv("MDM_API_URL")
+	if baseURL == "" {
+		baseURL = "https://mdm-matrix-backend.onrender.com"
+	}
+	return strings.TrimRight(baseURL, "/")
+}
+
+func deviceWebSocketURL(token string) (string, error) {
+	u, err := url.Parse(backendBaseURL())
+	if err != nil {
+		return "", err
+	}
+	switch u.Scheme {
+	case "https":
+		u.Scheme = "wss"
+	case "http":
+		u.Scheme = "ws"
+	default:
+		return "", fmt.Errorf("unsupported backend URL scheme %q", u.Scheme)
+	}
+	u.Path = "/ws"
+	query := u.Query()
+	query.Set("token", token)
+	u.RawQuery = query.Encode()
+	return u.String(), nil
+}
+
 func main() {
+	if deviceID := strings.TrimSpace(os.Getenv("DEVICE_ID")); deviceID != "" {
+		deviceName := strings.TrimSpace(os.Getenv("DEVICE_NAME"))
+		if deviceName == "" {
+			deviceName = deviceID
+		}
+		log.Printf("Starting device agent for %s (%s)", deviceName, deviceID)
+		startDevice(deviceID, deviceName)
+		return
+	}
+
 	fleetSize := 5
 	var wg sync.WaitGroup
 
@@ -84,8 +124,11 @@ func startDevice(deviceID, name string) {
 // connectAndRun handles the actual active connection.
 // It returns an error if the connection drops, triggering the backoff loop.
 func connectAndRun(deviceID, token string) error {
-	u := url.URL{Scheme: "ws", Host: "localhost:8080", Path: "/ws", RawQuery: "token=" + token}
-	c, _, err := websocket.DefaultDialer.Dial(u.String(), nil)
+	wsURL, err := deviceWebSocketURL(token)
+	if err != nil {
+		return err
+	}
+	c, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
 	if err != nil {
 		return err
 	}
@@ -159,7 +202,7 @@ func connectAndRun(deviceID, token string) error {
 
 func enrollDevice(id, name string) string {
 	reqBody, _ := json.Marshal(map[string]string{"id": id, "name": name})
-	resp, err := http.Post("https://mdm-matrix-backend.onrender.com/enroll", "application/json", bytes.NewBuffer(reqBody))
+	resp, err := http.Post(backendBaseURL()+"/enroll", "application/json", bytes.NewBuffer(reqBody))
 	if err != nil || resp.StatusCode != 200 {
 		return ""
 	}

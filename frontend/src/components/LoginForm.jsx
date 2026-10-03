@@ -1,23 +1,7 @@
 import { useState } from 'react';
 
-export default function LoginForm({ onLogin, error }) {
+export default function LoginForm({ onLogin, error, loading }) {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
-
-  const handleSubmit = (e) => {
-    e.preventDefault();
-    onLogin(username, password);
-  };
-
-  return (
-    <div className="login-container">
-      <h2>Mini MDM System</h2>
-      <form onSubmit={handleSubmit} className="login-form">
-        {error && <p className="error">{error}</p>}
-        <input type="text" placeholder="Username" value={username} onChange={e => setUsername(e.target.value)} />
-        <input type="password" placeholder="Password" value={password} onChange={e => setPassword(e.target.value)} />
-        <button type="submit">Login</button>
-      </form>
-    </div>
-  );
+  return <main className="login-page"><section className="login-art"><div className="login-logo"><b>M</b><span>MDM MATRIX</span></div><div><small>SECURE FLEET OPERATIONS</small><h1>Control every endpoint from one calm command center.</h1><p>Live visibility, resilient command delivery, and a clear operational picture for your simulated fleet.</p></div><footer><span><b>Live</b> telemetry</span><span><b>24/7</b> queue</span><span><b>JWT</b> access</span></footer></section><section className="login-panel"><form onSubmit={event => { event.preventDefault(); if (!loading) onLogin(username, password); }}><small>ADMIN CONSOLE</small><h2>Welcome back</h2><p>Sign in to monitor devices and manage fleet operations.</p>{error && <div className="error">{error}</div>}<label>Username<input autoComplete="username" value={username} onChange={event => setUsername(event.target.value)} placeholder="Enter your username" required /></label><label>Password<input autoComplete="current-password" type="password" value={password} onChange={event => setPassword(event.target.value)} placeholder="Enter your password" required /></label><button disabled={loading}>{loading ? 'Signing in...' : 'Sign in securely'}</button><em>Protected by encrypted transport and token authentication.</em></form></section></main>;
 }
