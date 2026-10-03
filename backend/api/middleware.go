@@ -1,13 +1,21 @@
 package api
 
 import (
+	"fmt"
 	"net/http"
+	"os"
 	"strings"
 
 	"github.com/golang-jwt/jwt/v5"
 )
 
-var jwtSecret = []byte("super-secret-mdm-key-change-me")
+func jwtSigningKey() ([]byte, error) {
+	secret := os.Getenv("JWT_SECRET")
+	if secret == "" {
+		return nil, fmt.Errorf("JWT_SECRET is not set")
+	}
+	return []byte(secret), nil
+}
 
 func CorsMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -33,7 +41,10 @@ func AuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
 
 		tokenString := strings.TrimPrefix(authHeader, "Bearer ")
 		token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
-			return jwtSecret, nil
+			if token.Method != jwt.SigningMethodHS256 {
+				return nil, fmt.Errorf("unexpected signing method: %s", token.Method.Alg())
+			}
+			return jwtSigningKey()
 		})
 
 		if err != nil || !token.Valid {

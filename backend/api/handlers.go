@@ -69,6 +69,11 @@ func HandleLogin(dbPool *pgxpool.Pool) http.HandlerFunc {
 			http.Error(w, "Invalid request", http.StatusBadRequest)
 			return
 		}
+		req.Username = strings.TrimSpace(req.Username)
+		if req.Username == "" || req.Password == "" {
+			http.Error(w, "Username and password are required", http.StatusBadRequest)
+			return
+		}
 
 		var hash string
 		err := dbPool.QueryRow(context.Background(), "SELECT password_hash FROM admin_user WHERE username = $1", req.Username).Scan(&hash)
@@ -82,7 +87,14 @@ func HandleLogin(dbPool *pgxpool.Pool) http.HandlerFunc {
 			"exp":      time.Now().Add(24 * time.Hour).Unix(),
 		})
 
-		tokenString, err := token.SignedString(jwtSecret)
+		key, err := jwtSigningKey()
+		if err != nil {
+			log.Printf("Login configuration error: %v", err)
+			http.Error(w, "Authentication is not configured", http.StatusInternalServerError)
+			return
+		}
+
+		tokenString, err := token.SignedString(key)
 		if err != nil {
 			http.Error(w, "Failed to generate token", http.StatusInternalServerError)
 			return
@@ -189,23 +201,23 @@ func HandleWS(dbPool *pgxpool.Pool, h *hub.Hub, adminHub *hub.AdminHub) http.Han
 		defer conn.Close()
 
 		h.Add(deviceID, conn)
-		
+
 		// Broadcast that the device came online
 		adminHub.Broadcast(map[string]interface{}{
-			"event": "device_update",
+			"event":     "device_update",
 			"device_id": deviceID,
-			"status": "online",
+			"status":    "online",
 		})
 
 		defer func() {
 			h.Remove(deviceID)
 			dbPool.Exec(context.Background(), "UPDATE devices SET status = 'offline' WHERE id = $1", deviceID)
-			
+
 			// Broadcast that the device went offline
 			adminHub.Broadcast(map[string]interface{}{
-				"event": "device_update",
+				"event":     "device_update",
 				"device_id": deviceID,
-				"status": "offline",
+				"status":    "offline",
 			})
 		}()
 
@@ -234,23 +246,23 @@ func HandleWS(dbPool *pgxpool.Pool, h *hub.Hub, adminHub *hub.AdminHub) http.Han
 			if msg.Type == "heartbeat" {
 				conn.SetReadDeadline(time.Now().Add(pongWait))
 				dbPool.Exec(context.Background(), "UPDATE devices SET status = $1, battery = $2, last_seen = NOW() WHERE id = $3", msg.Status, msg.Battery, deviceID)
-				
+
 				// Broadcast heartbeat data instantly
 				adminHub.Broadcast(map[string]interface{}{
-					"event": "device_update",
+					"event":     "device_update",
 					"device_id": deviceID,
-					"status": msg.Status,
-					"battery": msg.Battery,
+					"status":    msg.Status,
+					"battery":   msg.Battery,
 				})
 
 			} else if msg.Type == "ack" && msg.CommandID != "" {
 				conn.SetReadDeadline(time.Now().Add(pongWait))
 				dbPool.Exec(context.Background(), "UPDATE commands SET status = 'completed', completed_at = NOW() WHERE id = $1", msg.CommandID)
-				
+
 				// Broadcast that a command finished
 				adminHub.Broadcast(map[string]interface{}{
-					"event": "command_completed",
-					"device_id": deviceID,
+					"event":      "command_completed",
+					"device_id":  deviceID,
 					"command_id": msg.CommandID,
 				})
 			}
@@ -264,7 +276,10 @@ func HandleAdminWS(adminHub *hub.AdminHub) http.HandlerFunc {
 		// 1. Authenticate via query string token
 		tokenString := r.URL.Query().Get("token")
 		token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
-			return jwtSecret, nil
+			if token.Method != jwt.SigningMethodHS256 {
+				return nil, http.ErrNotSupported
+			}
+			return jwtSigningKey()
 		})
 
 		if err != nil || !token.Valid {
