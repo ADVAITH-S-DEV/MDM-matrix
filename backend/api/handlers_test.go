@@ -82,6 +82,19 @@ func TestDispatchCommandQueuesOfflineDevice(t *testing.T) {
 	}
 }
 
+func TestDispatchUnlockQueuesOfflineDevice(t *testing.T) {
+	db := &fakeDatabase{row: fakeRow{scan: func(dest ...interface{}) error {
+		*(dest[0].(*string)) = "00000000-0000-0000-0000-000000000001"
+		return nil
+	}}}
+	request := httptest.NewRequest(http.MethodPost, "/devices/device-1/command", strings.NewReader(`{"type":"unlock"}`))
+	response := httptest.NewRecorder()
+	HandleDispatchCommand(db, hub.NewHub())(response, request)
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("expected 202, got %d: %s", response.Code, response.Body.String())
+	}
+}
+
 func TestDispatchCommandRejectsUnsupportedType(t *testing.T) {
 	db := &fakeDatabase{}
 	request := httptest.NewRequest(http.MethodPost, "/devices/device-1/command", strings.NewReader(`{"type":"reboot_everything"}`))

@@ -125,7 +125,11 @@ func HandleGetDevices(dbPool Database) http.HandlerFunc {
 			return
 		}
 
-		rows, err := dbPool.Query(context.Background(), "SELECT id, name, status, battery, last_seen FROM devices ORDER BY id ASC")
+		rows, err := dbPool.Query(r.Context(), `SELECT d.id, d.name, d.status, d.battery, d.last_seen,
+            COALESCE((SELECT c.type = 'lock' FROM commands c
+              WHERE c.device_id = d.id AND c.status = 'completed' AND c.type IN ('lock', 'unlock')
+              ORDER BY c.completed_at DESC NULLS LAST, c.created_at DESC, c.id DESC LIMIT 1), false)
+            FROM devices d ORDER BY d.id ASC`)
 		if err != nil {
 			http.Error(w, "Database error", http.StatusInternalServerError)
 			return
@@ -135,7 +139,7 @@ func HandleGetDevices(dbPool Database) http.HandlerFunc {
 		devices := []types.Device{}
 		for rows.Next() {
 			var d types.Device
-			if err := rows.Scan(&d.ID, &d.Name, &d.Status, &d.Battery, &d.LastSeen); err == nil {
+			if err := rows.Scan(&d.ID, &d.Name, &d.Status, &d.Battery, &d.LastSeen, &d.Locked); err == nil {
 				devices = append(devices, d)
 			}
 		}
@@ -164,7 +168,7 @@ func HandleDispatchCommand(dbPool Database, h *hub.Hub) http.HandlerFunc {
 			http.Error(w, "Invalid request payload", http.StatusBadRequest)
 			return
 		}
-		if req.Type != "lock" && req.Type != "wipe" && req.Type != "update_policy" {
+		if req.Type != "lock" && req.Type != "unlock" && req.Type != "wipe" && req.Type != "update_policy" {
 			http.Error(w, "Unsupported command type", http.StatusBadRequest)
 			return
 		}
@@ -286,7 +290,11 @@ func HandleWS(dbPool Database, h *hub.Hub, adminHub *hub.AdminHub) http.HandlerF
 
 			} else if msg.Type == "ack" && msg.CommandID != "" {
 				conn.SetReadDeadline(time.Now().Add(pongWait))
-				dbPool.Exec(context.Background(), "UPDATE commands SET status = 'completed', completed_at = NOW() WHERE id = $1", msg.CommandID)
+				var action string
+				if err := dbPool.QueryRow(r.Context(), "UPDATE commands SET status = 'completed', completed_at = COALESCE(completed_at, NOW()) WHERE id = $1 AND device_id = $2 AND status IN ('pending', 'delivered', 'completed') RETURNING type", msg.CommandID, deviceID).Scan(&action); err != nil {
+					log.Printf("Failed to acknowledge command %s: %v", msg.CommandID, err)
+					continue
+				}
 				dbPool.Exec(context.Background(), "INSERT INTO command_events (command_id, device_id, activity) VALUES ($1, $2, 'acknowledged'), ($1, $2, 'completed')", msg.CommandID, deviceID)
 
 				// Broadcast that a command finished
@@ -294,6 +302,7 @@ func HandleWS(dbPool Database, h *hub.Hub, adminHub *hub.AdminHub) http.HandlerF
 					"event":      "command_completed",
 					"device_id":  deviceID,
 					"command_id": msg.CommandID,
+					"action":     action,
 				})
 			}
 		}

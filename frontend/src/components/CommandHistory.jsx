@@ -1,4 +1,4 @@
-const labels = { update_policy: 'Policy update', lock: 'Lock', wipe: 'Wipe' };
+const labels = { update_policy: 'Policy update', lock: 'Lock', unlock: 'Unlock', wipe: 'Wipe' };
 
 export default function CommandHistory({ commands, metrics, loading, error, onRefresh }) {
   const completionRate = metrics?.total ? Math.round((metrics.completed / metrics.total) * 100) : 0;

@@ -27,8 +27,14 @@ function App() {
         changed = true;
       }
     });
+    Object.entries(next).forEach(([deviceId, command]) => {
+      if (command.status !== 'completed' && history.some(item => item.id === command.commandId && item.status === 'completed')) {
+        next[deviceId] = { ...command, status: 'completed', message: `${command.label} completed` };
+        changed = true;
+      }
+    });
     return changed ? next : previous;
-  }), [commandCompletions]);
+  }), [commandCompletions, history]);
 
   useEffect(() => {
     if (Object.keys(commandCompletions).length > 0) refreshHistory();
@@ -49,7 +55,7 @@ function App() {
   };
 
   const sendCommand = async (deviceId, type) => {
-    const label = { lock: 'Lock', wipe: 'Wipe', update_policy: 'Policy update' }[type];
+    const label = { lock: 'Lock', unlock: 'Unlock', wipe: 'Wipe', update_policy: 'Policy update' }[type];
     const online = devices.find(device => device.id === deviceId)?.status === 'online';
     setCommands(previous => ({ ...previous, [deviceId]: { type, label, status: 'dispatching', message: `Sending ${label.toLowerCase()}...` } }));
     try {

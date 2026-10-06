@@ -3,6 +3,7 @@ package types
 import "time"
 
 type Device struct {
+	Locked   bool      `json:"locked"`
 	ID       string    `json:"id"`
 	Name     string    `json:"name"`
 	Status   string    `json:"status"`

@@ -9,6 +9,9 @@ export const useFleetState = (token, onLogout) => {
   useEffect(() => {
     if (!token) return;
     fetchInitialDevices(token).then(data => setDevices(data || [])).catch(onLogout);
+    const refreshTimer = setInterval(() => {
+      fetchInitialDevices(token).then(data => setDevices(data || [])).catch(() => {});
+    }, 15000);
     const apiUrl = (import.meta.env.VITE_API_URL || 'http://localhost:8080').replace(/\/$/, '');
     const ws = new WebSocket(`${apiUrl.replace(/^http/, 'ws')}/admin/ws?token=${token}`);
     ws.onopen = () => setConnectionStatus('connected');
@@ -19,10 +22,13 @@ export const useFleetState = (token, onLogout) => {
       if (data.event === 'device_update') {
         setDevices(previous => previous.map(device => device.id === data.device_id ? { ...device, status: data.status || device.status, battery: data.battery ?? device.battery, last_seen: new Date().toISOString() } : device));
       } else if (data.event === 'command_completed') {
+        if (['lock', 'unlock'].includes(data.action)) {
+          setDevices(previous => previous.map(device => device.id === data.device_id ? { ...device, locked: data.action === 'lock' } : device));
+        }
         setCommandCompletions(previous => ({ ...previous, [data.device_id]: data.command_id }));
       }
     };
-    return () => ws.close();
+    return () => { clearInterval(refreshTimer); ws.close(); };
   }, [token, onLogout]);
 
   return { devices, connectionStatus, commandCompletions };
