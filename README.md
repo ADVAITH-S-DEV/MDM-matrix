@@ -1,132 +1,193 @@
-# MDM-Matrix: Real-Time Mobile Device Management Platform
+# MDM Matrix — Simulated Device Management
 
-A high-performance, real-time Mobile Device Management (MDM) prototype engineered to remotely monitor, manage, and push operational commands to a concurrent fleet of endpoints. Built with a heavy focus on distributed systems resilience, concurrency patterns, and algorithmic optimization.
+A full-stack device-management prototype built with Go, React and PostgreSQL. An administrator can monitor simulated agents, send commands, and follow acknowledgements and command history through a deployed dashboard.
 
-## 🏗️ System Architecture
+**Scope:** this is a simulator-backed portfolio project, not a production MDM product. Lock, unlock, wipe and policy update commands are demonstrations; they do not control a real operating system, erase files, or apply real policies.
 
-The platform uses a decoupled architecture optimized for low-latency state synchronization and minimal database I/O:
+## Features
 
-*   **Backend:** Go (Modularized into clean `api`, `hub`, and `types` packages)
-*   **Frontend:** React (Vite) with custom hooks for WebSocket state management
-*   **Database:** PostgreSQL with connection pooling (`pgxpool`)
-*   **Simulated Fleet:** Go Goroutines simulating concurrent remote device agents
+- Admin login using bcrypt password verification and a signed, expiring JWT.
+- Device inventory with online/offline status, simulated battery level and last-seen time.
+- Lock and Unlock actions with a separate lock-state display.
+- Database-persisted commands for offline devices, replayed when an agent reconnects.
+- Live device updates and command acknowledgements over WebSockets, supplemented by periodic HTTP refreshes.
+- Recent command history and metrics: active/completed/failed counts, completion rate and average completion time.
+- Concurrent simulated agents with reconnect backoff and jitter.
+- Go handler/middleware tests, mocked Cypress browser tests, and GitHub Actions checks.
 
----
+## Architecture
 
-## 🚀 Key Engineering & Optimization Features
-
-Designed from the ground up to solve classic distributed systems challenges and handle network partitions gracefully:
-
-*   **$O(1)$ WebSocket Hub Routing:** Active connections are managed in-memory and protected by a `sync.RWMutex`. Adding, removing, and broadcasting to connected devices operates in $O(1)$ time complexity with a strictly bounded memory footprint.
-*   **$O(\log N)$ Offline Command Queueing:** Commands targeted at offline devices are safely persisted in PostgreSQL. A composite B-Tree index on `(device_id, status)` optimizes command queue retrieval upon device reconnection, dropping scan complexity from $O(N)$ to $O(\log N)$.
-*   **Thundering Herd Protection (Exponential Backoff with Jitter):** Device agents feature exponential backoff with randomized jitter. If the server restarts, reconnect attempts are scattered across time to prevent database connection pool exhaustion and CPU spikes.
-*   **Idempotent Receivers (At-Least-Once Delivery):** The device simulator maintains a thread-safe local cache of executed command IDs. If a network blip causes the backend to re-transmit a command, the device rejects the duplicate in $O(1)$ time, guaranteeing safe, idempotent execution.
-*   **Phantom Device Mitigation:** Enforces a strict `ReadDeadline` (Heartbeat Timeout) on server sockets. If a device experiences a dirty TCP disconnect, the backend safely reaps the connection and updates its state in $O(1)$ time, eliminating memory leaks.
-*   **Real-Time Admin Dashboard:** Shifted the React frontend from HTTP short-polling to a live WebSocket Pub/Sub model. This eliminates redundant database queries, pushing real-time UI state changes instantly in $O(K)$ time (where $K$ is active admin sessions).
-
----
-
-## 📂 Project Structure
-
-\`\`\`bash
-MDM-Matrix/
-├── backend/       # Go REST & WebSocket Server (JWT auth, Hub, Handlers)
-├── frontend/      # React Admin Dashboard (Vite, Custom Hooks, Component Architecture)
-└── simulator/     # Go Device Fleet Agent (Goroutines, Backoff, Idempotency)
-\`\`\`
-
-Database migrations live in `supabase/migrations`, browser automation lives in
-`frontend/cypress`, and GitHub Actions validates backend and frontend changes on
-every push and pull request.
-
----
-
-## ⚙️ How to Run Locally
-
-You will need three terminal windows to run the full distributed system simultaneously.
-
-### 1. Start the Backend
-\`\`\`bash
-cd backend
-go mod tidy
-go run main.go
-\`\`\`
-The backend requires these environment variables:
-
-```env
-DATABASE_URL=postgresql://...
-JWT_SECRET=generate-a-long-random-secret
+```text
+React dashboard (Vercel)
+   | REST: login, fleet, commands, metrics
+   | WebSocket: live admin updates
+   v
+Go API + in-memory connection hubs (Render)
+   |                         |
+   | SQL via pgxpool         | Device WebSockets
+   v                         v
+PostgreSQL (Supabase)     Go simulator agents
 ```
 
-For Render, use the exact Supabase connection string shown under **Connect →
-Transaction pooler**. It uses port `6543`, an IPv4-compatible pooler hostname,
-and a username in the form `postgres.PROJECT_REF`. The backend disables pgx's
-prepared-statement cache because Supabase transaction mode does not support it.
+The backend, frontend and simulator run independently. Supabase hosts PostgreSQL; login is implemented in the Go backend against the `admin_user` table, not through Supabase Auth.
 
-Admin credentials are read from the Supabase `admin_user` table. Its
-`password_hash` value must be a bcrypt hash; plaintext passwords are never stored
-in Render or in the database. Keep the same `JWT_SECRET` across deploys so
-existing login tokens remain valid.
+## Command lifecycle
 
-For a Render deployment, set both values in the service's Environment page.
-Render supplies `PORT` automatically. For Vercel, set `VITE_API_URL` to the full
-HTTPS Render service URL (with no `/login` suffix), then redeploy the frontend.
+1. The dashboard sends an authenticated command request.
+2. The backend saves a pending command and a creation event.
+3. If the agent is connected, the backend sends the command and records delivery. Otherwise the command stays pending and a queued event is recorded.
+4. The simulator waits approximately two seconds to represent execution, then acknowledges the command.
+5. The backend records completion and broadcasts it to the dashboard.
+6. Lock/Unlock state is derived from the latest completed lock-related command, so it survives a dashboard refresh.
 
-### 2. Start the Admin Dashboard
-\`\`\`bash
-cd frontend
-npm install
-npm run dev
-\`\`\`
-*(Access the dashboard at `http://localhost:5173`. Log in with your admin credentials)*
+An HTTP `202` means the command was accepted, not that it finished. A locked device can still be online. The simulator reports a fixed battery value rather than real telemetry.
 
-### 3. Start the Device Simulator
-\`\`\`bash
-cd simulator
-go mod tidy
-go run simulator.go
-\`\`\`
-Set `MDM_API_URL` only when targeting a different backend; it defaults to the
-hosted Render service. For local development, set it to `http://localhost:8080`.
-The simulator spins up concurrent device goroutines that enroll, connect through
-WebSockets, execute demo commands, and report heartbeats.
+## Repository layout
 
-To run one named device instead of the five-device fleet, set `DEVICE_ID` and
-`DEVICE_NAME` before starting it. The ID must match the device row shown in the
-dashboard.
+```text
+backend/
+  api/                 REST/WebSocket handlers, middleware and tests
+  hub/                 In-memory connection registries
+  types/               Request/response models
+  main.go              Configuration and route setup
+frontend/
+  src/components/      Login, inventory, summaries and history UI
+  src/hooks/           Fleet updates and command insights
+  src/services/        HTTP API client
+  cypress/e2e/         Mocked browser workflow tests
+simulator/
+  simulator.go         Concurrent demo agents
+supabase/
+  migrations/          Initial schema SQL
+  enable_unlock.sql    Separate SQL Editor patch allowing Unlock
+  seed.sql             Development-only admin seed
+.github/workflows/
+  ci.yml               Backend and frontend checks
+```
 
-## Database migrations
+## Local setup
 
-The repository follows Supabase's versioned migration workflow. Before deploying
-the backend changes, link the Supabase CLI to the project and apply the migration:
+Prerequisites: Go compatible with the version declared in each `go.mod`, Node.js 24 (matching CI), npm, and a configured PostgreSQL database. Use three terminals, starting from the repository root.
 
-\`\`\`bash
-supabase link --project-ref YOUR_PROJECT_REF
-supabase db push
-\`\`\`
+### Database and admin account
 
-The migration creates the reproducible schema, queue indexes, row-level security,
-and the append-only `command_events` lifecycle log. The backend connects with the
-database service role; the browser has no direct table access.
+For a new demo database, review and apply `supabase/migrations/20261006000000_initial_schema.sql`, then `supabase/enable_unlock.sql` through the Supabase SQL Editor. For an existing database, compare its schema first; `CREATE TABLE IF NOT EXISTS` does not reconcile every existing column or constraint.
 
-## Tests and automation
+The Unlock patch is outside the migration directory: applying the initial migration alone does not enable Unlock. If SQL was already applied manually, do not blindly run `supabase db push`; reconcile the migration history before adopting CLI-managed migrations.
 
-\`\`\`bash
+Admin credentials belong in `admin_user`; `password_hash` must contain a bcrypt hash. The optional `seed.sql` creates a known development account: use it only in an isolated development database, never in a hosted production/demo database exposed to others. Never publish credentials.
+
+### Backend
+
+Create an untracked `backend/.env` with your own values:
+
+```dotenv
+DATABASE_URL=your-postgresql-connection-string
+JWT_SECRET=your-long-random-signing-secret
+PORT=8080
+```
+
+```powershell
 cd backend
-go test ./...
+go mod download
+go run .
+```
 
-cd ../frontend
+The backend defaults to port 8080. Use the exact connection string from your Supabase project, with the appropriate TLS settings. Session pooling on port 5432 is an option for IPv4 connections; Render does not inherently require port 6543. The backend uses pgx execution mode without its statement cache to support transaction pooling as well. See [Supabase connection guidance](https://supabase.com/docs/guides/database/connecting-to-postgres).
+
+### Frontend
+
+In another terminal:
+
+```powershell
+cd frontend
+npm ci
+$env:VITE_API_URL = "http://localhost:8080"
+npm run dev
+```
+
+Open the URL Vite prints and sign in with your configured admin account. See the frontend README for UI configuration and testing details.
+
+### Simulator
+
+In a third terminal, explicitly select the local backend:
+
+```powershell
+cd simulator
+$env:MDM_API_URL = "http://localhost:8080"
+go mod download
+go run .
+```
+
+Without `MDM_API_URL`, the simulator targets `https://mdm-matrix-backend.onrender.com`. It runs five agents named `fleet-device-001` through `fleet-device-005`.
+
+To run one agent instead, set `DEVICE_ID` and optionally `DEVICE_NAME` before starting. Use the existing device ID to bring that dashboard row online. A row's name does not mean a physical device exists. The simulator must remain running for heartbeats and acknowledgements.
+
+## Deployment configuration
+
+- **Render backend:** configure `DATABASE_URL` and `JWT_SECRET` in the service environment. Render supplies `PORT`. Local changes to an `.env` file do not update hosted environment variables.
+- **Vercel frontend:** configure `VITE_API_URL` as the HTTPS backend base URL, without a route suffix. It is public build-time configuration; never place database credentials or signing secrets in frontend variables.
+- **Simulator:** run separately with `MDM_API_URL` pointing at the hosted backend. Hosting the API does not automatically start the simulator.
+
+Apply required database changes before deploying dependent backend code, then deploy the frontend. Keep secrets outside Git. Changes to Vite environment values require a new frontend build.
+
+## API overview
+
+| Endpoint | Purpose | Authentication |
+| --- | --- | --- |
+| `GET /health` | Basic server liveness | None |
+| `POST /login` | Verify admin credentials and return JWT | Credentials |
+| `POST /enroll` | Register/re-enroll a demo agent | Currently public; prototype limitation |
+| `GET /devices` | Inventory including derived lock state | Bearer JWT |
+| `POST /devices/{id}/command` | Queue `lock`, `unlock`, `wipe`, or `update_policy` | Bearer JWT |
+| `GET /commands?limit=20` | Recent commands (maximum limit 200) | Bearer JWT |
+| `GET /metrics/commands` | Aggregate command metrics | Bearer JWT |
+| `/ws?token=...` | Agent WebSocket | Device token |
+| `/admin/ws?token=...` | Admin WebSocket | JWT |
+
+Lifecycle records are stored in `command_events`. They provide a foundation for process analysis; this project does not implement a process-mining engine.
+
+## Tests and CI
+
+```powershell
+cd backend
+go vet ./...
+go test ./...
+go test -race ./...
+```
+
+The race detector requires a supported compiler/toolchain; CI runs it on Linux.
+
+```powershell
+cd frontend
 npm ci
 npm run lint
 npm run build
 npm run test:e2e
-\`\`\`
+```
 
-The Cypress flow covers login, fleet loading, and command dispatch. GitHub Actions
-runs formatting, vetting, race-enabled Go tests, frontend lint/build, and Cypress.
+GitHub Actions runs Go formatting checks, vetting and race-enabled tests, plus frontend lint, build and Cypress. Go tests use database fakes. Cypress intercepts HTTP requests to test login, inventory, command dispatch and Unlock UI; it does not validate the real database, real agent acknowledgements or deployed WebSockets. Passing CI is not a load-test or production-readiness guarantee.
 
-## Command process API
+## Manual demo checklist
 
-- `GET /commands?limit=20` returns recent command history.
-- `GET /metrics/commands` returns active/completed/failed counts and average cycle time.
-- `command_events` records created, queued, delivered, acknowledged, completed, and failed activities for process-mining analysis.
+1. Start the API, dashboard and simulator; verify online agents.
+2. Lock an agent; wait for acknowledgement and verify Locked/Unlock.
+3. Unlock it; verify Unlocked/Lock.
+4. Reload the dashboard; confirm the acknowledged lock state persists.
+5. Stop the simulator; wait for offline detection.
+6. Queue a command, restart the simulator, and verify eventual completion.
+7. Check command history and aggregate metrics.
+
+## Current limitations and next steps
+
+- Only simulated devices; no OS-level management, policy payloads or real wipe.
+- One backend instance owns its connections in memory; horizontal scaling needs shared routing/pub-sub.
+- Duplicate command IDs are cached only within a simulator connection, not durably across restarts. This is not an exactly-once execution guarantee.
+- Lifecycle writes are not fully transactional; duplicate acknowledgements can add duplicate event records.
+- Concurrent socket writes and reconnect ordering need further hardening.
+- The schema includes failed status/events, but a complete failure-reporting, timeout and retry workflow is not implemented.
+- Public demo enrollment, permissive CORS/origin handling, browser token storage and tokens in WebSocket URLs require a security review before production use.
+- No real-database integration suite, deployed browser suite or published performance benchmark.
+- Docker packaging is a possible future enhancement; it is not currently implemented.
+
+This project demonstrates API-driven UI development, Go concurrency, persistent command tracking, browser automation and cloud deployment. Describe it as a **simulated device-management prototype**, with these boundaries stated clearly.
