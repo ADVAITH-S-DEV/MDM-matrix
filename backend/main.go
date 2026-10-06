@@ -67,6 +67,8 @@ func main() {
 
 	http.HandleFunc("/devices", api.CorsMiddleware(api.AuthMiddleware(api.HandleGetDevices(dbPool))))
 	http.HandleFunc("/devices/", api.CorsMiddleware(api.AuthMiddleware(api.HandleDispatchCommand(dbPool, h))))
+	http.HandleFunc("/commands", api.CorsMiddleware(api.AuthMiddleware(api.HandleGetCommands(dbPool))))
+	http.HandleFunc("/metrics/commands", api.CorsMiddleware(api.AuthMiddleware(api.HandleGetCommandMetrics(dbPool))))
 
 	port := os.Getenv("PORT")
 	if port == "" {

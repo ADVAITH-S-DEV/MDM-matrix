@@ -66,6 +66,6 @@ func (h *AdminHub) Broadcast(message interface{}) {
 	defer h.Mu.RUnlock()
 	for conn := range h.Conns {
 		// If a write fails, we ignore it here; the read loop will clean it up
-		conn.WriteJSON(message) 
+		conn.WriteJSON(message)
 	}
 }

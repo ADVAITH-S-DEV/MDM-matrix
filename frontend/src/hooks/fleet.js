@@ -8,7 +8,6 @@ export const useFleetState = (token, onLogout) => {
 
   useEffect(() => {
     if (!token) return;
-    setConnectionStatus('connecting');
     fetchInitialDevices(token).then(data => setDevices(data || [])).catch(onLogout);
     const apiUrl = (import.meta.env.VITE_API_URL || 'http://localhost:8080').replace(/\/$/, '');
     const ws = new WebSocket(`${apiUrl.replace(/^http/, 'ws')}/admin/ws?token=${token}`);

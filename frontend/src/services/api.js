@@ -35,3 +35,19 @@ export const sendDeviceCommand = async (deviceId, type, token) => {
   if (!res.ok) throw await errorFromResponse(res, 'Failed to dispatch');
   return res.json();
 };
+
+export const fetchCommands = async (token, limit = 20) => {
+  const res = await fetch(`${BASE_URL}/commands?limit=${limit}`, {
+    headers: { 'Authorization': `Bearer ${token}` }
+  });
+  if (!res.ok) throw await errorFromResponse(res, 'Unable to load command history');
+  return res.json();
+};
+
+export const fetchCommandMetrics = async (token) => {
+  const res = await fetch(`${BASE_URL}/metrics/commands`, {
+    headers: { 'Authorization': `Bearer ${token}` }
+  });
+  if (!res.ok) throw await errorFromResponse(res, 'Unable to load command metrics');
+  return res.json();
+};

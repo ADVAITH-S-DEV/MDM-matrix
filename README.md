@@ -35,6 +35,10 @@ MDM-Matrix/
 └── simulator/     # Go Device Fleet Agent (Goroutines, Backoff, Idempotency)
 \`\`\`
 
+Database migrations live in `supabase/migrations`, browser automation lives in
+`frontend/cypress`, and GitHub Actions validates backend and frontend changes on
+every push and pull request.
+
 ---
 
 ## ⚙️ How to Run Locally
@@ -90,3 +94,39 @@ WebSockets, execute demo commands, and report heartbeats.
 To run one named device instead of the five-device fleet, set `DEVICE_ID` and
 `DEVICE_NAME` before starting it. The ID must match the device row shown in the
 dashboard.
+
+## Database migrations
+
+The repository follows Supabase's versioned migration workflow. Before deploying
+the backend changes, link the Supabase CLI to the project and apply the migration:
+
+\`\`\`bash
+supabase link --project-ref YOUR_PROJECT_REF
+supabase db push
+\`\`\`
+
+The migration creates the reproducible schema, queue indexes, row-level security,
+and the append-only `command_events` lifecycle log. The backend connects with the
+database service role; the browser has no direct table access.
+
+## Tests and automation
+
+\`\`\`bash
+cd backend
+go test ./...
+
+cd ../frontend
+npm ci
+npm run lint
+npm run build
+npm run test:e2e
+\`\`\`
+
+The Cypress flow covers login, fleet loading, and command dispatch. GitHub Actions
+runs formatting, vetting, race-enabled Go tests, frontend lint/build, and Cypress.
+
+## Command process API
+
+- `GET /commands?limit=20` returns recent command history.
+- `GET /metrics/commands` returns active/completed/failed counts and average cycle time.
+- `command_events` records created, queued, delivered, acknowledged, completed, and failed activities for process-mining analysis.

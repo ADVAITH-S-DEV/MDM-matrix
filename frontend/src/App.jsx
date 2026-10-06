@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { loginAdmin, sendDeviceCommand } from './services/api';
 import { useFleetState } from './hooks/fleet.js';
+import { useCommandInsights } from './hooks/commandInsights.js';
 import LoginForm from './components/LoginForm';
 import DeviceTable from './components/DeviceTable';
 import DashboardHeader from './components/DashboardHeader';
 import FleetStats from './components/FleetStats';
+import CommandHistory from './components/CommandHistory';
 import './App.css';
 
 function App() {
@@ -14,6 +16,7 @@ function App() {
   const [commands, setCommands] = useState({});
   const logout = useCallback(() => { setToken(''); setCommands({}); localStorage.removeItem('mdm_token'); }, []);
   const { devices, connectionStatus, commandCompletions } = useFleetState(token, logout);
+  const { history, metrics, loading: historyLoading, error: historyError, refresh: refreshHistory } = useCommandInsights(token);
 
   useEffect(() => setCommands(previous => {
     const next = { ...previous };
@@ -26,6 +29,10 @@ function App() {
     });
     return changed ? next : previous;
   }), [commandCompletions]);
+
+  useEffect(() => {
+    if (Object.keys(commandCompletions).length > 0) refreshHistory();
+  }, [commandCompletions, refreshHistory]);
 
   const summary = useMemo(() => ({
     total: devices.length,
@@ -48,6 +55,7 @@ function App() {
     try {
       const result = await sendDeviceCommand(deviceId, type, token);
       setCommands(previous => ({ ...previous, [deviceId]: { type, label, commandId: result.command_id, status: online ? 'pending' : 'queued', message: online ? `${label} sent — awaiting device` : `${label} queued until reconnect` } }));
+      refreshHistory();
     } catch (commandError) {
       setCommands(previous => ({ ...previous, [deviceId]: { type, label, status: 'failed', message: commandError.message } }));
     }
@@ -58,6 +66,7 @@ function App() {
     <DashboardHeader connectionStatus={connectionStatus} onLogout={logout} />
     <FleetStats summary={summary} />
     <section className="fleet"><div className="section-title"><div><small>DEVICE INVENTORY</small><h2>Managed fleet</h2></div><span>{devices.length} devices</span></div><DeviceTable devices={devices} onCommand={sendCommand} commandStates={commands} /></section>
+    <CommandHistory commands={history} metrics={metrics} loading={historyLoading} error={historyError} onRefresh={refreshHistory} />
   </main>;
 }
 

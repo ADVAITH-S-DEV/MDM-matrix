@@ -38,3 +38,22 @@ type LoginRequest struct {
 type LoginResponse struct {
 	Token string `json:"token"`
 }
+
+type Command struct {
+	ID            string     `json:"id"`
+	DeviceID      string     `json:"device_id"`
+	Type          string     `json:"type"`
+	Status        string     `json:"status"`
+	CreatedAt     time.Time  `json:"created_at"`
+	DeliveredAt   *time.Time `json:"delivered_at,omitempty"`
+	CompletedAt   *time.Time `json:"completed_at,omitempty"`
+	FailureReason *string    `json:"failure_reason,omitempty"`
+}
+
+type CommandMetrics struct {
+	Total               int64   `json:"total"`
+	Active              int64   `json:"active"`
+	Completed           int64   `json:"completed"`
+	Failed              int64   `json:"failed"`
+	AverageCompletionMS float64 `json:"average_completion_ms"`
+}

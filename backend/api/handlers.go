@@ -8,6 +8,7 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -16,7 +17,6 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -28,7 +28,7 @@ func generateToken() (string, error) {
 	return hex.EncodeToString(bytes), nil
 }
 
-func HandleEnroll(dbPool *pgxpool.Pool) http.HandlerFunc {
+func HandleEnroll(dbPool Database) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -59,7 +59,7 @@ func HandleEnroll(dbPool *pgxpool.Pool) http.HandlerFunc {
 	}
 }
 
-func HandleLogin(dbPool *pgxpool.Pool) http.HandlerFunc {
+func HandleLogin(dbPool Database) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -118,7 +118,7 @@ func HandleLogin(dbPool *pgxpool.Pool) http.HandlerFunc {
 	}
 }
 
-func HandleGetDevices(dbPool *pgxpool.Pool) http.HandlerFunc {
+func HandleGetDevices(dbPool Database) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -145,7 +145,7 @@ func HandleGetDevices(dbPool *pgxpool.Pool) http.HandlerFunc {
 	}
 }
 
-func HandleDispatchCommand(dbPool *pgxpool.Pool, h *hub.Hub) http.HandlerFunc {
+func HandleDispatchCommand(dbPool Database, h *hub.Hub) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -164,6 +164,10 @@ func HandleDispatchCommand(dbPool *pgxpool.Pool, h *hub.Hub) http.HandlerFunc {
 			http.Error(w, "Invalid request payload", http.StatusBadRequest)
 			return
 		}
+		if req.Type != "lock" && req.Type != "wipe" && req.Type != "update_policy" {
+			http.Error(w, "Unsupported command type", http.StatusBadRequest)
+			return
+		}
 
 		var cmdID string
 		err := dbPool.QueryRow(context.Background(),
@@ -173,6 +177,11 @@ func HandleDispatchCommand(dbPool *pgxpool.Pool, h *hub.Hub) http.HandlerFunc {
 			http.Error(w, "Failed to save command", http.StatusInternalServerError)
 			return
 		}
+		if _, err := dbPool.Exec(context.Background(),
+			"INSERT INTO command_events (command_id, device_id, activity) VALUES ($1, $2, 'created')",
+			cmdID, deviceID); err != nil {
+			log.Printf("Failed to record command creation event: %v", err)
+		}
 
 		h.Mu.RLock()
 		conn, isOnline := h.Conns[deviceID]
@@ -181,8 +190,12 @@ func HandleDispatchCommand(dbPool *pgxpool.Pool, h *hub.Hub) http.HandlerFunc {
 		if isOnline {
 			wsMsg := map[string]interface{}{"type": "command", "command_id": cmdID, "action": req.Type}
 			if err := conn.WriteJSON(wsMsg); err == nil {
+				dbPool.Exec(context.Background(), "UPDATE commands SET status = 'delivered', delivered_at = NOW() WHERE id = $1", cmdID)
+				dbPool.Exec(context.Background(), "INSERT INTO command_events (command_id, device_id, activity) VALUES ($1, $2, 'delivered')", cmdID, deviceID)
 				log.Printf("Dispatched '%s' command to %s", req.Type, deviceID)
 			}
+		} else {
+			dbPool.Exec(context.Background(), "INSERT INTO command_events (command_id, device_id, activity) VALUES ($1, $2, 'queued')", cmdID, deviceID)
 		}
 
 		w.Header().Set("Content-Type", "application/json")
@@ -192,7 +205,7 @@ func HandleDispatchCommand(dbPool *pgxpool.Pool, h *hub.Hub) http.HandlerFunc {
 }
 
 // UPDATED: Now accepts adminHub to broadcast changes
-func HandleWS(dbPool *pgxpool.Pool, h *hub.Hub, adminHub *hub.AdminHub) http.HandlerFunc {
+func HandleWS(dbPool Database, h *hub.Hub, adminHub *hub.AdminHub) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		token := r.URL.Query().Get("token")
 		if token == "" {
@@ -235,13 +248,16 @@ func HandleWS(dbPool *pgxpool.Pool, h *hub.Hub, adminHub *hub.AdminHub) http.Han
 		}()
 
 		// Fetch pending commands...
-		rows, err := dbPool.Query(context.Background(), "SELECT id, type FROM commands WHERE device_id = $1 AND status = 'pending' ORDER BY created_at ASC", deviceID)
+		rows, err := dbPool.Query(context.Background(), "SELECT id, type FROM commands WHERE device_id = $1 AND status IN ('pending', 'delivered') ORDER BY created_at ASC", deviceID)
 		if err == nil {
 			for rows.Next() {
 				var cmdID, cmdType string
 				if err := rows.Scan(&cmdID, &cmdType); err == nil {
 					wsMsg := map[string]interface{}{"type": "command", "command_id": cmdID, "action": cmdType}
-					conn.WriteJSON(wsMsg)
+					if err := conn.WriteJSON(wsMsg); err == nil {
+						dbPool.Exec(context.Background(), "UPDATE commands SET status = 'delivered', delivered_at = NOW() WHERE id = $1", cmdID)
+						dbPool.Exec(context.Background(), "INSERT INTO command_events (command_id, device_id, activity) VALUES ($1, $2, 'delivered')", cmdID, deviceID)
+					}
 				}
 			}
 			rows.Close()
@@ -271,6 +287,7 @@ func HandleWS(dbPool *pgxpool.Pool, h *hub.Hub, adminHub *hub.AdminHub) http.Han
 			} else if msg.Type == "ack" && msg.CommandID != "" {
 				conn.SetReadDeadline(time.Now().Add(pongWait))
 				dbPool.Exec(context.Background(), "UPDATE commands SET status = 'completed', completed_at = NOW() WHERE id = $1", msg.CommandID)
+				dbPool.Exec(context.Background(), "INSERT INTO command_events (command_id, device_id, activity) VALUES ($1, $2, 'acknowledged'), ($1, $2, 'completed')", msg.CommandID, deviceID)
 
 				// Broadcast that a command finished
 				adminHub.Broadcast(map[string]interface{}{
@@ -280,6 +297,62 @@ func HandleWS(dbPool *pgxpool.Pool, h *hub.Hub, adminHub *hub.AdminHub) http.Han
 				})
 			}
 		}
+	}
+}
+
+func HandleGetCommands(dbPool Database) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		limit := 50
+		if requested, err := strconv.Atoi(r.URL.Query().Get("limit")); err == nil && requested > 0 && requested <= 200 {
+			limit = requested
+		}
+		rows, err := dbPool.Query(r.Context(), `
+			SELECT id, device_id, type, status, created_at, delivered_at, completed_at, failure_reason
+			FROM commands ORDER BY created_at DESC LIMIT $1`, limit)
+		if err != nil {
+			http.Error(w, "Database error", http.StatusInternalServerError)
+			return
+		}
+		defer rows.Close()
+		commands := []types.Command{}
+		for rows.Next() {
+			var command types.Command
+			if err := rows.Scan(&command.ID, &command.DeviceID, &command.Type, &command.Status, &command.CreatedAt, &command.DeliveredAt, &command.CompletedAt, &command.FailureReason); err != nil {
+				http.Error(w, "Database error", http.StatusInternalServerError)
+				return
+			}
+			commands = append(commands, command)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(commands)
+	}
+}
+
+func HandleGetCommandMetrics(dbPool Database) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		var metrics types.CommandMetrics
+		err := dbPool.QueryRow(r.Context(), `
+			SELECT COUNT(*),
+			       COUNT(*) FILTER (WHERE status IN ('pending', 'delivered')),
+			       COUNT(*) FILTER (WHERE status = 'completed'),
+			       COUNT(*) FILTER (WHERE status = 'failed'),
+			       COALESCE(AVG(EXTRACT(EPOCH FROM (completed_at - created_at)) * 1000)
+			           FILTER (WHERE status = 'completed'), 0)
+			FROM commands`).Scan(&metrics.Total, &metrics.Active, &metrics.Completed, &metrics.Failed, &metrics.AverageCompletionMS)
+		if err != nil {
+			http.Error(w, "Database error", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(metrics)
 	}
 }
 
